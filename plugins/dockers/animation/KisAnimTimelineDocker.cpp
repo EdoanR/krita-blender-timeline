@@ -9,6 +9,16 @@
 #include "KisAnimTimelineDocker.h"
 
 #include <QPointer>
+#include <QApplication>
+#include <QCheckBox>
+#include <QSlider>
+#include "KisAnimTimelineTimeHeader.h"
+#include <QKeyEvent>
+#include <QKeySequence>
+#include <functional>
+#include "KisAnimTimelineSummary.h"
+#include "KisAnimTimelineRangeField.h"
+#include "KisAnimTimelineTransform.h"
 #include "QHBoxLayout"
 #include "QVBoxLayout"
 #include "QFormLayout"
@@ -52,6 +62,34 @@
 #include "KisAnimationPlaybackControlsModel.h"
 #include "KisWidgetConnectionUtils.h"
 #include "KisImageConfigNotifier.h"
+
+// Claim Blender keys only on the focused frame table. QShortcut alone would
+// conflict with Krita's window-wide G/X actions and become ambiguous.
+class TimelineShortcutFilter : public QObject
+{
+public:
+    explicit TimelineShortcutFilter(QTableView *view) : QObject(view), m_view(view) {}
+    QMap<int, std::function<void()>> bindings;
+
+protected:
+    bool eventFilter(QObject *, QEvent *event) override
+    {
+        if (QApplication::focusWidget() != m_view && QApplication::focusWidget() != m_view->viewport()) return false;
+        if (event->type() != QEvent::ShortcutOverride && event->type() != QEvent::KeyPress) return false;
+        auto keyEvent = static_cast<QKeyEvent *>(event);
+        const int modifiers = int(keyEvent->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+        auto binding = bindings.constFind(keyEvent->key() | modifiers);
+        if (binding == bindings.constEnd()) return false;
+        event->accept();
+        const int key = keyEvent->key();
+        const bool navigation = key == Qt::Key_Left || key == Qt::Key_Right || key == Qt::Key_Up || key == Qt::Key_Down;
+        if (event->type() == QEvent::KeyPress && (!keyEvent->isAutoRepeat() || navigation)) binding.value()();
+        return true;
+    }
+
+private:
+    QTableView *m_view;
+};
 
 
 KisAnimTimelineDockerTitlebar::KisAnimTimelineDockerTitlebar(QWidget* parent) :
@@ -191,11 +229,9 @@ KisAnimTimelineDockerTitlebar::KisAnimTimelineDockerTitlebar(QWidget* parent) :
 
             sbStartFrame = new KisIntParseSpinBox(settingsMenuWidget);
             sbStartFrame->setMaximum(10000);
-            fieldsLayout->addRow(i18n("Clip Start: "), sbStartFrame);
 
             sbEndFrame = new KisIntParseSpinBox(settingsMenuWidget);
             sbEndFrame->setMaximum(10000);
-            fieldsLayout->addRow(i18n("Clip End: "), sbEndFrame);
 
             sbFrameRate = new KisIntParseSpinBox(settingsMenuWidget);
             sbFrameRate->setMinimum(0);
@@ -288,6 +324,9 @@ struct KisAnimTimelineDocker::Private
     KisSignalAutoConnectionsStore canvasConnections;
     KisMainWindow *mainWindow;
     KisAnimationPlaybackControlsModel controlsModel;
+    QCheckBox *preview;
+    KisIntParseSpinBox *previewStart;
+    KisIntParseSpinBox *previewEnd;
 };
 
 
@@ -296,7 +335,146 @@ KisAnimTimelineDocker::KisAnimTimelineDocker()
     : QDockWidget(i18n("Animation Timeline"))
     , m_d(new Private(this))
 {
-    setWidget(m_d->framesView);
+    QWidget *body = new QWidget(this);
+    auto bodyLayout = new QVBoxLayout(body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(0);
+    auto summary = new KisAnimTimelineSummary(m_d->framesView, m_d->framesModel, body);
+    summary->setObjectName("timelineSummary");
+    bodyLayout->addWidget(summary);
+    bodyLayout->addWidget(m_d->framesView);
+    auto footer = new QHBoxLayout;
+    bodyLayout->addLayout(footer);
+
+    auto transform = new KisAnimTimelineTransform(m_d->framesView, m_d->framesModel, body);
+    auto retime = [this, transform](bool scale) {
+        const bool overwrite = !scale && m_d->framesView->property("summaryKeySelection").toBool();
+        transform->begin(scale, QCursor::pos(), false, overwrite);
+    };
+    summary->startTransform = [transform](bool scale, QPoint origin, QPoint current, bool drag, Qt::KeyboardModifiers modifiers) {
+        if (transform->begin(scale, origin, drag, !scale)) transform->moveTo(current, modifiers);
+    };
+    auto button = [this, footer](const QString &text, const QString &tip, const std::function<void()> &fn) {
+        auto b = new QToolButton(this);
+        b->setText(text);
+        b->setToolTip(tip);
+        footer->addWidget(b);
+        connect(b, &QToolButton::clicked, this, fn);
+        return b;
+    };
+    button(i18n("Move"), i18n("Move selected keys (G)"), [retime]() { retime(false); });
+    button(i18n("Scale"), i18n("Scale selected key spacing (S)"), [retime]() { retime(true); });
+    auto shortcutFilter = new TimelineShortcutFilter(m_d->framesView);
+    m_d->framesView->installEventFilter(shortcutFilter);
+    m_d->framesView->viewport()->installEventFilter(shortcutFilter);
+    auto shortcut = [shortcutFilter](const QKeySequence &key, const std::function<void()> &fn) {
+        shortcutFilter->bindings.insert(key[0], fn);
+    };
+    shortcut(QKeySequence(Qt::Key_G), [retime]() { retime(false); });
+    shortcut(QKeySequence(Qt::Key_S), [retime]() { retime(true); });
+    shortcut(QKeySequence(Qt::Key_A), [this]() {
+        QItemSelection selection;
+        const auto times = m_d->framesModel->summaryKeyframeTimes();
+        for (int row = 0; row < m_d->framesModel->rowCount(); ++row) {
+            for (int time : times) {
+                auto idx = m_d->framesModel->index(row, time);
+                if (idx.data(KisTimeBasedItemModel::FrameExistsRole).toBool()
+                    || idx.data(KisTimeBasedItemModel::SpecialKeyframeExists).toBool()) selection.select(idx, idx);
+            }
+        }
+        m_d->framesView->selectionModel()->select(selection, QItemSelectionModel::ClearAndSelect);
+    });
+    shortcut(QKeySequence(Qt::ALT | Qt::Key_A), [this]() { m_d->framesView->clearSelection(); });
+    shortcut(QKeySequence(Qt::Key_X), [this]() { m_d->framesView->slotRemoveSelectedFrames(); });
+    shortcut(QKeySequence(Qt::Key_I), [this]() { m_d->framesView->slotAddBlankFrame(); });
+    shortcut(QKeySequence(Qt::Key_Left), [this]() {
+        if (m_d->canvas && m_d->playbackEngine) m_d->playbackEngine->previousFrame();
+    });
+    shortcut(QKeySequence(Qt::Key_Right), [this]() {
+        if (m_d->canvas && m_d->playbackEngine) m_d->playbackEngine->nextFrame();
+    });
+    shortcut(QKeySequence(Qt::Key_Up), [this]() {
+        if (m_d->canvas && m_d->playbackEngine) m_d->playbackEngine->nextKeyframe();
+    });
+    shortcut(QKeySequence(Qt::Key_Down), [this]() {
+        if (m_d->canvas && m_d->playbackEngine) m_d->playbackEngine->previousKeyframe();
+    });
+
+    auto zoomSlider = new QSlider(Qt::Horizontal, body);
+    zoomSlider->setObjectName("timelineZoomSlider");
+    zoomSlider->setRange(1, 72);
+    zoomSlider->setFixedWidth(110);
+    zoomSlider->setToolTip(i18n("Timeline zoom. Use the wheel over the frame grid to zoom under the pointer."));
+    auto zoomLevel = new QLabel(body);
+    zoomLevel->setMinimumWidth(40);
+    auto updateZoom = [zoomSlider, zoomLevel](qreal zoom) {
+        QSignalBlocker blocker(zoomSlider);
+        zoomSlider->setValue(qRound(zoom * KisAnimTimelineTimeHeader::BaseFrameWidth));
+        zoomLevel->setText(QString::number(qRound(zoom * 100)) + "%");
+    };
+    updateZoom(m_d->framesView->timelineZoom());
+    connect(zoomSlider, &QSlider::valueChanged, this, [this](int pixels) {
+        m_d->framesView->setTimelineZoom(qreal(pixels) / KisAnimTimelineTimeHeader::BaseFrameWidth);
+    });
+    connect(m_d->framesView, &KisAnimTimelineFramesView::sigTimelineZoomChanged, body, updateZoom);
+    footer->addWidget(zoomSlider);
+    footer->addWidget(zoomLevel);
+    auto fitButton = button(i18n("Fit"), i18n("Fit the playback range, enabled preview range, and all timeline keys"), [this]() {
+        if (!m_d->canvas || !m_d->canvas->image()) return;
+        auto animation = m_d->canvas->image()->animationInterface();
+        int last = animation->documentPlaybackRange().end();
+        if (animation->previewPlaybackRangeEnabled()) last = qMax(last, animation->previewPlaybackRange().end());
+        for (int time : m_d->framesModel->summaryKeyframeTimes()) last = qMax(last, time);
+        if (!m_d->framesView->fitTimeline(last)) {
+            m_d->canvas->viewManager()->showFloatingMessage(
+                i18n("Minimum timeline zoom reached (one pixel per frame). Scroll to see the remaining frames."), QIcon());
+        }
+    });
+    fitButton->setObjectName("timelineFitButton");
+    footer->addStretch();
+    // Reuse the native range fields and their existing signal connections.
+    m_d->titlebar->sbStartFrame->setPrefix(i18n("Start: "));
+    m_d->titlebar->sbEndFrame->setPrefix(i18n("End: "));
+    footer->addWidget(m_d->titlebar->sbStartFrame);
+    footer->addWidget(m_d->titlebar->sbEndFrame);
+    m_d->preview = new QCheckBox(i18n("Preview"), body);
+    m_d->preview->setObjectName("timelinePreviewRange");
+    m_d->preview->setToolTip(i18n("Loop a temporary range without changing the clip range"));
+    footer->addWidget(m_d->preview);
+    m_d->previewStart = new KisIntParseSpinBox(body);
+    m_d->previewEnd = new KisIntParseSpinBox(body);
+    m_d->previewStart->setRange(0, 9999);
+    m_d->previewEnd->setRange(0, 9999);
+    m_d->previewStart->setPrefix(i18n("From: "));
+    m_d->previewEnd->setPrefix(i18n("To: "));
+    footer->addWidget(m_d->previewStart);
+    footer->addWidget(m_d->previewEnd);
+    connect(m_d->preview, &QCheckBox::toggled, this, &KisAnimTimelineDocker::applyPreviewRange);
+    connect(m_d->previewStart, SIGNAL(valueChanged(int)), this, SLOT(applyPreviewRange()));
+    connect(m_d->previewEnd, SIGNAL(valueChanged(int)), this, SLOT(applyPreviewRange()));
+    auto rangeField = [this](KisIntParseSpinBox *field, bool preview, bool start) {
+        field->setObjectName(preview ? (start ? "timelinePreviewStart" : "timelinePreviewEnd")
+                                     : (start ? "timelineClipStart" : "timelineClipEnd"));
+        field->setToolTip(i18n("Shift-click to use the current animation frame"));
+        new KisAnimTimelineRangeField(field, [this, preview, start]() {
+            if (!m_d->canvas || !m_d->canvas->image()) return;
+            auto animation = m_d->canvas->image()->animationInterface();
+            const int frame = qBound(0, animation->currentTime(), 9999);
+            auto range = preview ? animation->previewPlaybackRange() : animation->documentPlaybackRange();
+            const int first = start ? frame : qMin(range.start(), frame);
+            const int last = start ? qMax(range.end(), frame) : frame;
+            const auto updated = KisTimeSpan::fromTimeToTime(first, last);
+            if (preview) animation->setPreviewPlaybackRange(updated, animation->previewPlaybackRangeEnabled());
+            else animation->setDocumentRange(updated);
+            m_d->canvas->viewManager()->document()->setModified(true);
+            syncTimelineRanges();
+        });
+    };
+    rangeField(m_d->titlebar->sbStartFrame, false, true);
+    rangeField(m_d->titlebar->sbEndFrame, false, false);
+    rangeField(m_d->previewStart, true, true);
+    rangeField(m_d->previewEnd, true, false);
+    setWidget(body);
 
     // Titlebar Widget..
     setTitleBarWidget(m_d->titlebar);
@@ -455,18 +633,47 @@ void KisAnimTimelineDocker::setCanvas(KoCanvasBase * canvas)
         connect(m_d->canvas->image()->animationInterface(), SIGNAL(sigUiTimeChanged(int)), this, SLOT(updateFrameRegister()));
 
         connect(m_d->canvas->image()->animationInterface(), &KisImageAnimationInterface::sigPlaybackRangeChanged, this, [this]() {
-            if (!m_d->canvas || !m_d->canvas->image()) return;
-
-            KisImageAnimationInterface *animInterface = m_d->canvas->image()->animationInterface();
-
-            m_d->titlebar->sbStartFrame->setValue(animInterface->documentPlaybackRange().start());
-            m_d->titlebar->sbEndFrame->setValue(animInterface->documentPlaybackRange().end());
+            syncTimelineRanges();
         });
 
         connect(m_d->canvas->image()->animationInterface(), SIGNAL(sigFramerateChanged()), SLOT(handleFrameRateChange()));
 
         m_d->controlsModel.connectAnimationState(m_d->canvas->animationState());
+        syncTimelineRanges();
     }
+}
+
+void KisAnimTimelineDocker::syncTimelineRanges()
+{
+    if (!m_d->canvas || !m_d->canvas->image()) return;
+    auto image = m_d->canvas->image();
+    auto ai = image->animationInterface();
+    const auto clip = ai->documentPlaybackRange();
+    const auto savedPreview = ai->previewPlaybackRange();
+    QSignalBlocker b1(m_d->titlebar->sbStartFrame), b2(m_d->titlebar->sbEndFrame);
+    QSignalBlocker b3(m_d->preview), b4(m_d->previewStart), b5(m_d->previewEnd);
+    m_d->titlebar->sbStartFrame->setRange(0, 9999);
+    m_d->titlebar->sbEndFrame->setRange(0, 9999);
+    m_d->titlebar->sbStartFrame->setValue(clip.start());
+    m_d->titlebar->sbEndFrame->setValue(clip.end());
+    m_d->titlebar->sbStartFrame->setMaximum(clip.end());
+    m_d->titlebar->sbEndFrame->setMinimum(clip.start());
+    const bool enabled = ai->previewPlaybackRangeEnabled();
+    m_d->preview->setChecked(enabled);
+    m_d->previewStart->setValue(savedPreview.start());
+    m_d->previewEnd->setValue(savedPreview.end());
+    m_d->previewStart->setEnabled(enabled);
+    m_d->previewEnd->setEnabled(enabled);
+}
+
+void KisAnimTimelineDocker::applyPreviewRange()
+{
+    if (!m_d->canvas || !m_d->canvas->image()) return;
+    const int start = m_d->previewStart->value();
+    const int end = qMax(start, m_d->previewEnd->value());
+    auto image = m_d->canvas->image();
+    image->animationInterface()->setPreviewPlaybackRange(KisTimeSpan::fromTimeToTime(start, end), m_d->preview->isChecked());
+    m_d->canvas->viewManager()->document()->setModified(true);
 }
 
 void KisAnimTimelineDocker::handleThemeChange()
@@ -483,7 +690,7 @@ void KisAnimTimelineDocker::updateFrameCache()
 
 void KisAnimTimelineDocker::updateFrameRegister()
 {
-    if (!m_d->canvas && !m_d->canvas->image()) {
+    if (!m_d->canvas || !m_d->canvas->image()) {
         return;
     }
 

@@ -110,6 +110,8 @@ public Q_SLOTS:
     void updatePlaybackStatistics();
 
     void handleThemeChange();
+    void syncTimelineRanges();
+    void applyPreviewRange();
 
 private:
     struct Private;

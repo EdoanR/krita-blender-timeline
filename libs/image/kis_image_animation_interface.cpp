@@ -42,6 +42,8 @@ struct KisImageAnimationInterface::Private
           frameInvalidationBlocked(false),
           documentRange(rhs.documentRange),
           activePlaybackRange(rhs.activePlaybackRange),
+          previewRange(rhs.previewRange),
+          previewEnabled(rhs.previewEnabled),
           framerate(rhs.framerate),
           cachedLastFrameValue(-1),
           exportSequenceFilePath(rhs.exportSequenceFilePath),
@@ -58,6 +60,8 @@ struct KisImageAnimationInterface::Private
 
     KisTimeSpan documentRange;
     KisTimeSpan activePlaybackRange;
+    KisTimeSpan previewRange;
+    bool previewEnabled = false;
     int framerate;
     int cachedLastFrameValue;
 
@@ -168,7 +172,29 @@ void KisImageAnimationInterface::setDocumentRangeEndFrame(int column)
 
 const KisTimeSpan& KisImageAnimationInterface::activePlaybackRange() const
 {
+    if (m_d->previewEnabled && m_d->previewRange.isValid()) return m_d->previewRange;
     return m_d->activePlaybackRange.isValid() ? m_d->activePlaybackRange : m_d->documentRange;
+}
+
+KisTimeSpan KisImageAnimationInterface::previewPlaybackRange() const
+{
+    return m_d->previewRange.isValid() ? m_d->previewRange : m_d->documentRange;
+}
+
+bool KisImageAnimationInterface::previewPlaybackRangeEnabled() const
+{
+    return m_d->previewEnabled;
+}
+
+void KisImageAnimationInterface::setPreviewPlaybackRange(const KisTimeSpan &range, bool enabled)
+{
+    if (!range.isValid() || range.isInfinite() || range.start() < 0 || range.end() > 9999) return;
+    if (m_d->previewRange == range && m_d->previewEnabled == enabled) return;
+    m_d->previewRange = range;
+    m_d->previewEnabled = enabled;
+    // An explicit preview toggle replaces any old temporary playback selection.
+    m_d->activePlaybackRange = KisTimeSpan();
+    Q_EMIT sigPlaybackRangeChanged();
 }
 
 void KisImageAnimationInterface::setActivePlaybackRange(const KisTimeSpan range)

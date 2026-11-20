@@ -6,6 +6,8 @@
 
 #include "KisAnimTimelineFramesModel.h"
 #include <QFont>
+#include <cmath>
+#include <limits>
 #include <QSize>
 #include <QColor>
 #include <QMimeData>
@@ -51,6 +53,80 @@
 #include "kis_node_uuid_info.h"
 #include "KisMainWindow.h"
 
+
+QSet<int> KisAnimTimelineFramesModel::summaryKeyframeTimes() const
+{
+    QSet<int> times;
+    if (!hasConnectionToCanvas()) return times;
+    for (int row = 0; row < rowCount(); ++row) {
+        const auto channels = channelsAt(index(row, 0));
+        for (auto channel : channels) times.unite(channel->allKeyframeTimes());
+    }
+    return times;
+}
+
+bool KisAnimTimelineFramesModel::retimeFrames(const QModelIndexList &indexes, double scale, int offset,
+                                             QModelIndexList *retimedIndexes, int pivotTime, bool dryRun, bool allowOverwrite)
+{
+    if (!hasConnectionToCanvas() || !std::isfinite(scale) || qFuzzyIsNull(scale)) return false;
+    if (!dryRun && (isPlaybackActive() || isPlaybackPaused())) stopPlayback();
+    KisImageSP targetImage = image();
+    KisImageBarrierLock locker(targetImage);
+    KisAnimUtils::FrameItemList sources;
+    int pivot = std::numeric_limits<int>::max();
+    for (const auto &idx : indexes) {
+        if (idx.model() != this || !idx.data(FrameEditableRole).toBool()) continue;
+        const auto channels = channelsAt(idx);
+        for (auto channel : channels) {
+            if (!channel->keyframeAt(idx.column())) continue;
+            KisAnimUtils::FrameItem item(nodeAt(idx), channel->id(), idx.column());
+            if (!sources.contains(item)) sources.append(item);
+            pivot = qMin(pivot, idx.column());
+        }
+    }
+    if (sources.isEmpty()) return false;
+    if (pivotTime >= 0) pivot = pivotTime;
+    KisAnimUtils::FrameItemList destinations;
+    int lastDestination = 0;
+    bool changed = false;
+    for (const auto &source : sources) {
+        const double time = pivot + (source.time - pivot) * scale + offset;
+        if (!std::isfinite(time) || time < -0.499 || time >= 9999.5) return false;
+        auto destination = source;
+        destination.time = qRound(time);
+        if (destinations.contains(destination)) return false;
+        auto channel = source.node->getKeyframeChannel(source.channel);
+        if (!allowOverwrite && channel->keyframeAt(destination.time) && !sources.contains(destination)) return false;
+        destinations.append(destination);
+        lastDestination = qMax(lastDestination, destination.time);
+        changed |= source.time != destination.time;
+    }
+    if (dryRun) return true;
+    auto updateSelection = [&]() {
+        if (lastDestination >= columnCount()) setLastVisibleFrame(lastDestination);
+        if (!retimedIndexes) return;
+        retimedIndexes->clear();
+        for (const auto &idx : indexes) {
+            const auto channels = channelsAt(idx);
+            for (auto channel : channels) {
+                if (sources.contains(KisAnimUtils::FrameItem(nodeAt(idx), channel->id(), idx.column()))) {
+                    auto destination = index(idx.row(), qRound(pivot + (idx.column() - pivot) * scale + offset));
+                    if (!retimedIndexes->contains(destination)) retimedIndexes->append(destination);
+                }
+            }
+        }
+    };
+    if (!changed) {
+        updateSelection();
+        return true;
+    }
+    auto command = KisAnimUtils::createMoveKeyframesCommand(sources, destinations, false, false);
+    updateSelection();
+    locker.unlock();
+    KisProcessingApplicator::runSingleCommandStroke(targetImage, command,
+        KisStrokeJobData::BARRIER, KisStrokeJobData::EXCLUSIVE);
+    return true;
+}
 
 struct KisAnimTimelineFramesModel::Private
 {

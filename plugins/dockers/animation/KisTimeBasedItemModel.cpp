@@ -230,6 +230,10 @@ QVariant KisTimeBasedItemModel::data(const QModelIndex &index, int role) const
         }
         case WithinClipRange:
             return m_d->withinClipRange(index.column());
+        case WithinPlaybackRange:
+        case PreviewRangeStart:
+        case PreviewRangeEnd:
+            return headerData(index.column(), Qt::Horizontal, role);
         }
 
     return QVariant();
@@ -263,6 +267,15 @@ QVariant KisTimeBasedItemModel::headerData(int section, Qt::Orientation orientat
             return m_d->framesPerSecond();
         case WithinClipRange:
             return m_d->withinClipRange(section);
+        case WithinPlaybackRange:
+            return m_d->image && m_d->image->animationInterface()->activePlaybackRange().contains(section);
+        case PreviewRangeStart:
+        case PreviewRangeEnd:
+            if (m_d->image && m_d->image->animationInterface()->previewPlaybackRangeEnabled()) {
+                const auto range = m_d->image->animationInterface()->previewPlaybackRange();
+                return role == PreviewRangeStart ? range.start() : range.end();
+            }
+            return QVariant();
         }
     }
 
@@ -574,13 +587,14 @@ void KisTimeBasedItemModel::slotPlaybackRangeChanged()
     if (m_d->image && m_d->image->animationInterface() ) {
         const KisImageAnimationInterface* const interface = m_d->image->animationInterface();
         const int lastFrame = interface->activePlaybackRange().end();
-        if (lastFrame > m_d->numFramesOverride) {
-            beginInsertColumns(QModelIndex(), m_d->numFramesOverride, interface->activePlaybackRange().end());
-            m_d->numFramesOverride = interface->activePlaybackRange().end();
+        if (lastFrame >= m_d->numFramesOverride) {
+            beginInsertColumns(QModelIndex(), m_d->numFramesOverride, lastFrame);
+            m_d->numFramesOverride = lastFrame + 1;
             endInsertColumns();
         }
 
-        dataChanged(index(0,0), index(rowCount(), columnCount()));
+        Q_EMIT dataChanged(index(0,0), index(rowCount() - 1, columnCount() - 1));
+        Q_EMIT headerDataChanged(Qt::Horizontal, 0, columnCount() - 1);
     }
 }
 

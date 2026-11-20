@@ -25,6 +25,7 @@ public:
     void setPixelOffset(qreal offset);
 
     void setFramePerSecond(int fps);
+    static constexpr int BaseFrameWidth = 18;
     bool setZoom(qreal zoomLevel);
     qreal zoom();
 
@@ -38,6 +39,7 @@ public:
     int estimateLastVisibleColumn();
 
 protected:
+    void wheelEvent(QWheelEvent *event) override;
     void mousePressEvent(QMouseEvent *e) override;
 
     void mouseReleaseEvent(QMouseEvent *e) override;

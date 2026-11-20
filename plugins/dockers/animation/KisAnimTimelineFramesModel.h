@@ -71,6 +71,11 @@ public:
 
     bool createFrame(const QModelIndexList &dstIndex);
     bool copyFrame(const QModelIndex &dstIndex);
+    // Scale about pivotTime (or earliest key), then translate. Reject collisions.
+    // dryRun validates without changing frames, selection, playback, or undo.
+    bool retimeFrames(const QModelIndexList &indexes, double scale, int offset = 0,
+                      QModelIndexList *retimedIndexes = nullptr, int pivotTime = -1, bool dryRun = false, bool allowOverwrite = false);
+    QSet<int> summaryKeyframeTimes() const;
     void makeClonesUnique(const QModelIndexList &indices);
 
     bool insertFrames(int dstColumn, const QList<int> &dstRows, int count, int timing = 1);

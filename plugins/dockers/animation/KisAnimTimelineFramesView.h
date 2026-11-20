@@ -37,6 +37,17 @@ public:
     void setActionManager(KisActionManager *actionManager);
 
     void updateGeometries() override;
+    qreal timelineZoom() const;
+    void setTimelineZoom(qreal zoom, int anchorViewportX = -1);
+    bool fitTimeline(int lastFrame);
+    bool beginTimelineZoom(QMouseEvent *event, QWidget *source = nullptr);
+    bool isTimelineZoomActive() const;
+    void updateTimelineZoom(QPoint globalPosition);
+    void endTimelineZoom();
+
+Q_SIGNALS:
+    void sigTimelineZoomChanged(qreal zoom);
+
 
 public Q_SLOTS:
     void slotCanvasUpdate(class KoCanvasBase* canvas);
@@ -132,6 +143,7 @@ public Q_SLOTS:
 
 protected:
     bool viewportEvent(QEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
 
     void mousePressEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;

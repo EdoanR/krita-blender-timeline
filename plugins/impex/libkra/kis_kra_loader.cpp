@@ -782,6 +782,14 @@ void KisKraLoader::loadAnimationMetadataFromXML(const QDomElement &element, KisI
         animation->setDocumentRange(range);
     }
 
+    bool previewEnabled = false;
+    KisTimeSpan previewRange;
+    if (!rootElement.firstChildElement("preview-range").isNull()
+        && KisDomUtils::loadValue(rootElement, "preview-range", &previewRange)) {
+        KisDomUtils::loadValue(rootElement, "preview-enabled", &previewEnabled);
+        animation->setPreviewPlaybackRange(previewRange, previewEnabled);
+    }
+
     if (KisDomUtils::loadValue(rootElement, "currentTime", &currentTime)) {
         animation->switchCurrentTimeAsync(currentTime);
     }

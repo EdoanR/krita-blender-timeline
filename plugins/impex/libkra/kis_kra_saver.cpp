@@ -148,6 +148,8 @@ QDomElement KisKraSaver::saveXML(QDomDocument& doc,  KisImageSP image)
     QDomElement animationElement = doc.createElement("animation");
     KisDomUtils::saveValue(&animationElement, "framerate", image->animationInterface()->framerate());
     KisDomUtils::saveValue(&animationElement, "range", image->animationInterface()->documentPlaybackRange());
+    KisDomUtils::saveValue(&animationElement, "preview-range", image->animationInterface()->previewPlaybackRange());
+    KisDomUtils::saveValue(&animationElement, "preview-enabled", image->animationInterface()->previewPlaybackRangeEnabled());
     KisDomUtils::saveValue(&animationElement, "currentTime", image->animationInterface()->currentUITime());
     imageElement.appendChild(animationElement);
 
@@ -397,6 +399,8 @@ void KisKraSaver::saveAnimationMetadataToXML(QDomDocument &doc, QDomElement &ele
 {
     KisDomUtils::saveValue(&element, "framerate", image->animationInterface()->framerate());
     KisDomUtils::saveValue(&element, "range", image->animationInterface()->documentPlaybackRange());
+    KisDomUtils::saveValue(&element, "preview-range", image->animationInterface()->previewPlaybackRange());
+    KisDomUtils::saveValue(&element, "preview-enabled", image->animationInterface()->previewPlaybackRangeEnabled());
     KisDomUtils::saveValue(&element, "currentTime", image->animationInterface()->currentUITime());
 
     {

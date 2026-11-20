@@ -5,6 +5,8 @@
  */
 
 #include "KisAnimTimelineFramesView.h"
+#include "kis_config.h"
+#include <cmath>
 
 #include "KisAnimTimelineFramesModel.h"
 #include "KisAnimTimelineTimeHeader.h"
@@ -108,6 +110,14 @@ struct KisAnimTimelineFramesView::Private
     int fps;
     QPoint initialDragPanValue;
     QPoint initialDragPanPos;
+    bool penZoomActive = false;
+    int penZoomDirection = 1;
+    QPoint penZoomLastPosition;
+    qreal penZoomAnchorFrame = 0;
+    int penZoomAnchorX = 0;
+    QPointer<QWidget> penZoomCursorWidget;
+    QCursor penZoomPreviousCursor;
+    bool penZoomHadCursor = false;
 
     bool dragInProgress;
     bool dragWasSuccessful;
@@ -245,6 +255,8 @@ KisAnimTimelineFramesView::KisAnimTimelineFramesView(QWidget *parent)
     hZoomableBar->setEnabled(false);
 
     connect(hZoomableBar, &KisZoomableScrollBar::valueChanged, m_d->horizontalRuler, &KisAnimTimelineTimeHeader::setPixelOffset);
+    connect(m_d->horizontalRuler, &KisAnimTimelineTimeHeader::sigZoomChanged,
+            this, &KisAnimTimelineFramesView::sigTimelineZoomChanged);
     connect(hZoomableBar, SIGNAL(zoom(qreal)), this, SLOT(slotZoom(qreal)));
     connect(hZoomableBar, SIGNAL(overscroll(qreal)), SLOT(slotUpdateInfiniteFramesCount()));
     connect(hZoomableBar, SIGNAL(sliderReleased()), SLOT(slotUpdateInfiniteFramesCount()));
@@ -284,6 +296,7 @@ KisAnimTimelineFramesView::KisAnimTimelineFramesView(QWidget *parent)
 
 KisAnimTimelineFramesView::~KisAnimTimelineFramesView()
 {
+    endTimelineZoom();
 }
 
 void KisAnimTimelineFramesView::setModel(QAbstractItemModel *model)
@@ -493,27 +506,9 @@ void KisAnimTimelineFramesView::slotUpdateFrameActions()
 
 void KisAnimTimelineFramesView::slotSelectionChanged()
 {
-    int minColumn = std::numeric_limits<int>::max();
-    int maxColumn = std::numeric_limits<int>::min();    
-
     calculateActiveLayerSelectedTimes(selectedIndexes());
-
-    foreach (const QModelIndex &idx, selectedIndexes()) {
-        if (idx.column() > maxColumn) {
-            maxColumn = idx.column();
-        }
-
-        if (idx.column() < minColumn) {
-            minColumn = idx.column();
-        }
-    }
-
-    KisTimeSpan range;
-    if (maxColumn > minColumn) {
-        range = KisTimeSpan::fromTimeWithDuration(minColumn, maxColumn - minColumn + 1);
-    }
-
-    m_d->model->setPlaybackRange(range);
+    // Preview is explicitly controlled by the docker's range fields. Selecting
+    // or retiming keys must not silently replace or disable that range.
 }
 
 void KisAnimTimelineFramesView::slotReselectCurrentIndex()
@@ -786,17 +781,95 @@ void KisAnimTimelineFramesView::slotScrollerStateChanged( QScroller::State state
     KisKineticScroller::updateCursor(this, state);
 }
 
+qreal KisAnimTimelineFramesView::timelineZoom() const
+{
+    return m_d->horizontalRuler->zoom();
+}
+
+void KisAnimTimelineFramesView::setTimelineZoom(qreal zoom, int anchorViewportX)
+{
+    if (!std::isfinite(zoom)) return;
+    if (anchorViewportX < 0) anchorViewportX = viewport()->width() / 2;
+    const int oldWidth = qMax(1, m_d->horizontalRuler->defaultSectionSize());
+    const qreal anchorFrame = qreal(horizontalScrollBar()->value() + anchorViewportX) / oldWidth;
+    if (m_d->horizontalRuler->setZoom(zoom)) {
+        slotUpdateInfiniteFramesCount();
+        updateGeometries();
+        const int width = m_d->horizontalRuler->defaultSectionSize();
+        horizontalScrollBar()->setValue(qRound(anchorFrame * width - anchorViewportX));
+        viewport()->update();
+    }
+}
+
+bool KisAnimTimelineFramesView::fitTimeline(int lastFrame)
+{
+    const int count = qMax(1, lastFrame + 1);
+    const int available = qMax(1, viewport()->width() - 12);
+    const qreal width = qBound(qreal(1), qreal(available) / count, qreal(72));
+    setTimelineZoom(width / KisAnimTimelineTimeHeader::BaseFrameWidth, 0);
+    horizontalScrollBar()->setValue(0);
+    return qreal(count) * m_d->horizontalRuler->defaultSectionSize() <= viewport()->width();
+}
+
+bool KisAnimTimelineFramesView::beginTimelineZoom(QMouseEvent *event, QWidget *source)
+{
+    if (m_d->penZoomActive) { event->accept(); return true; }
+    if (event->button() != Qt::LeftButton || !(event->modifiers() & Qt::ControlModifier)) return false;
+    setFocus(Qt::MouseFocusReason);
+    if (!m_d->modifiersCatcher->modifierPressed("pan-zoom")) return false;
+
+    KisConfig config(true);
+    m_d->penZoomDirection = config.readEntry<bool>("InvertMiddleClickZoom", false) ? -1 : 1;
+    m_d->penZoomActive = true;
+    m_d->penZoomLastPosition = event->globalPos();
+    m_d->penZoomAnchorX = viewport()->mapFromGlobal(event->globalPos()).x();
+    const int frameWidth = qMax(1, horizontalHeader()->defaultSectionSize());
+    m_d->penZoomAnchorFrame = qreal(horizontalScrollBar()->value() + m_d->penZoomAnchorX) / frameWidth;
+    m_d->penZoomCursorWidget = source ? source : viewport();
+    m_d->penZoomHadCursor = m_d->penZoomCursorWidget->testAttribute(Qt::WA_SetCursor);
+    m_d->penZoomPreviousCursor = m_d->penZoomCursorWidget->cursor();
+    m_d->penZoomCursorWidget->setCursor(Qt::SizeVerCursor);
+    event->accept();
+    return true;
+}
+
+bool KisAnimTimelineFramesView::isTimelineZoomActive() const
+{
+    return m_d->penZoomActive;
+}
+
+void KisAnimTimelineFramesView::updateTimelineZoom(QPoint globalPosition)
+{
+    if (!m_d->penZoomActive) return;
+    const int distance = m_d->penZoomLastPosition.y() - globalPosition.y();
+    m_d->penZoomLastPosition = globalPosition;
+    const qreal zoom = qBound(qreal(1) / KisAnimTimelineTimeHeader::BaseFrameWidth,
+                             timelineZoom() * std::pow(2.0, qreal(distance * m_d->penZoomDirection) / 100), qreal(4));
+    setTimelineZoom(zoom, m_d->penZoomAnchorX);
+    horizontalScrollBar()->setValue(qRound(m_d->penZoomAnchorFrame * horizontalHeader()->defaultSectionSize()
+                                           - m_d->penZoomAnchorX));
+}
+
+void KisAnimTimelineFramesView::endTimelineZoom()
+{
+    if (!m_d->penZoomActive) return;
+    m_d->penZoomActive = false;
+    if (m_d->penZoomCursorWidget) {
+        if (m_d->penZoomHadCursor) m_d->penZoomCursorWidget->setCursor(m_d->penZoomPreviousCursor);
+        else m_d->penZoomCursorWidget->unsetCursor();
+    }
+    m_d->penZoomCursorWidget.clear();
+}
+
+void KisAnimTimelineFramesView::focusOutEvent(QFocusEvent *event)
+{
+    endTimelineZoom();
+    QTableView::focusOutEvent(event);
+}
+
 void KisAnimTimelineFramesView::slotZoom(qreal zoom)
 {
-    const int originalFirstColumn = m_d->horizontalRuler->estimateFirstVisibleColumn();
-    if (m_d->horizontalRuler->setZoom(m_d->horizontalRuler->zoom() + zoom)) {
-        const int newLastColumn = m_d->horizontalRuler->estimateFirstVisibleColumn();
-        if (newLastColumn >= m_d->model->columnCount()) {
-            slotUpdateInfiniteFramesCount();
-        }
-        viewport()->update();
-        horizontalScrollBar()->setValue(scrollPositionFromColumn(originalFirstColumn));
-    }
+    setTimelineZoom(timelineZoom() + zoom, 0);
 }
 
 void KisAnimTimelineFramesView::slotUpdateDragInfiniteFramesCount() {
@@ -857,6 +930,8 @@ void KisAnimTimelineFramesView::calculateActiveLayerSelectedTimes(const QModelIn
 
 bool KisAnimTimelineFramesView::viewportEvent(QEvent *event)
 {
+    if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::Hide
+        || event->type() == QEvent::WindowDeactivate) endTimelineZoom();
     // Seems to have been copied over from KisResourceItemListView.
     // These tooltips currently give bogus info (empty thumbnail and resource location), so removed for now.
     // TODO: Implement meaningful tooltips if there's demand, probably including frame thumbnails.
@@ -880,7 +955,9 @@ bool KisAnimTimelineFramesView::viewportEvent(QEvent *event)
 
 void KisAnimTimelineFramesView::mousePressEvent(QMouseEvent *event)
 {
+    if (beginTimelineZoom(event)) return;
     QPersistentModelIndex index = indexAt(event->pos());
+    setProperty("summaryKeySelection", false);
 
     if (m_d->modifiersCatcher->modifierPressed("pan-zoom")) {
 
@@ -997,6 +1074,9 @@ void KisAnimTimelineFramesView::mousePressEvent(QMouseEvent *event)
     } else {
         if (index.isValid()) {
             m_d->model->setLastClickedIndex(index);
+            if (event->button() == Qt::LeftButton) {
+                m_d->model->setData(index, true, KisAnimTimelineFramesModel::ActiveLayerRole);
+            }
         }
 
         m_d->lastPressedPosition =
@@ -1010,6 +1090,7 @@ void KisAnimTimelineFramesView::mousePressEvent(QMouseEvent *event)
 }
 
 void KisAnimTimelineFramesView::mouseDoubleClickEvent(QMouseEvent *event) {
+    if (beginTimelineZoom(event)) return;
     QPersistentModelIndex index = indexAt(event->pos());
     
     if (index.isValid()) {
@@ -1025,6 +1106,11 @@ void KisAnimTimelineFramesView::mouseDoubleClickEvent(QMouseEvent *event) {
 
 void KisAnimTimelineFramesView::mouseMoveEvent(QMouseEvent *e)
 {
+    if (isTimelineZoomActive()) {
+        updateTimelineZoom(e->globalPos());
+        e->accept();
+        return;
+    }
     // Custom keyframe dragging distance based on zoom level.
     if (state() == DraggingState &&
         (horizontalHeader()->defaultSectionSize() / 2) < QApplication::startDragDistance() ) {
@@ -1076,6 +1162,14 @@ void KisAnimTimelineFramesView::mouseMoveEvent(QMouseEvent *e)
 
 void KisAnimTimelineFramesView::mouseReleaseEvent(QMouseEvent *e)
 {
+    if (isTimelineZoomActive()) {
+        if (e->button() == Qt::LeftButton) {
+            updateTimelineZoom(e->globalPos());
+            endTimelineZoom();
+        }
+        e->accept();
+        return;
+    }
     if (m_d->modifiersCatcher->modifierPressed("pan-zoom")) {
         e->accept();
     } else {
@@ -1270,26 +1364,22 @@ void KisAnimTimelineFramesView::dropEvent(QDropEvent *event)
     m_d->dragWasSuccessful = event->isAccepted();
 }
 
-void KisAnimTimelineFramesView::wheelEvent(QWheelEvent *e)
+void KisAnimTimelineFramesView::wheelEvent(QWheelEvent *event)
 {
-    const int scrollDirection = e->delta() > 0 ? 1 : -1;
-    bool mouseOverLayerPanel = verticalHeader()->geometry().contains(verticalHeader()->mapFromGlobal(e->globalPos()));
-
-    if (mouseOverLayerPanel) {
-        QTableView::wheelEvent(e);
-    } else { // Mouse is over frames table view...
-        QModelIndex index = currentIndex();
-        int column= -1;
-
-        if (index.isValid()) {
-            column = index.column() + scrollDirection;
-        }
-
-        if (column >= 0 && !m_d->dragInProgress) {
-            slotUpdateInfiniteFramesCount();
-            setCurrentIndex(m_d->model->index(index.row(), column));
-        }
+    if (verticalHeader()->geometry().contains(verticalHeader()->mapFromGlobal(event->globalPos()))) {
+        QTableView::wheelEvent(event);
+        return;
     }
+    const int delta = event->angleDelta().y() ? event->angleDelta().y() : event->pixelDelta().y();
+    if (!delta) {
+        QTableView::wheelEvent(event);
+        return;
+    }
+    if (!m_d->dragInProgress) {
+        const qreal factor = std::pow(1.15, qreal(delta) / 120);
+        setTimelineZoom(timelineZoom() * factor, event->pos().x());
+    }
+    event->accept();
 }
 
 void KisAnimTimelineFramesView::resizeEvent(QResizeEvent *event)

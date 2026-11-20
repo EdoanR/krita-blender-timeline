@@ -7,6 +7,7 @@
  */
 
 #include "KisAnimTimelineTimeHeader.h"
+#include "KisAnimTimelineFramesView.h"
 
 #include <limits>
 
@@ -14,6 +15,9 @@
 #include <QAction>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QWheelEvent>
+#include <QTableView>
+#include <QApplication>
 #include <KisPlaybackEngine.h>
 
 #include <klocalizedstring.h>
@@ -54,9 +58,9 @@ struct KisAnimTimelineTimeHeader::Private
     int lastPressSectionIndex;
 
     qreal offset = 0.0f;
-    const int minSectionSize = 4;
+    const int minSectionSize = 1;
     const int maxSectionSize = 72;
-    const int unitSectionSize = 18;
+    const int unitSectionSize = KisAnimTimelineTimeHeader::BaseFrameWidth;
     qreal remainder = 0.0f;
 
     int calcSpanWidth(const int sectionWidth);
@@ -69,7 +73,7 @@ KisAnimTimelineTimeHeader::KisAnimTimelineTimeHeader(QWidget *parent)
 {
     setSectionResizeMode(QHeaderView::Fixed);
     setDefaultSectionSize(18);
-    setMinimumSectionSize(8);
+    setMinimumSectionSize(1);
 }
 
 KisAnimTimelineTimeHeader::~KisAnimTimelineTimeHeader()
@@ -217,6 +221,17 @@ void KisAnimTimelineTimeHeader::paintEvent(QPaintEvent *e)
         }
         paintSection1(&painter, currentSectionRect, logical);
         painter.restore();
+    }
+
+    const QVariant previewStart = model()->headerData(0, Qt::Horizontal, KisTimeBasedItemModel::PreviewRangeStart);
+    const QVariant previewEnd = model()->headerData(0, Qt::Horizontal, KisTimeBasedItemModel::PreviewRangeEnd);
+    if (previewStart.isValid() && previewEnd.isValid()) {
+        const int x1 = sectionViewportPosition(previewStart.toInt());
+        const int x2 = sectionViewportPosition(previewEnd.toInt()) + sectionSize(previewEnd.toInt());
+        painter.setPen(QPen(palette().highlight().color(), 3));
+        painter.drawLine(x1, 1, x2, 1);
+        painter.drawLine(x1 + 1, 0, x1 + 1, height);
+        painter.drawLine(x2 - 1, 0, x2 - 1, height);
     }
 }
 
@@ -366,7 +381,7 @@ void KisAnimTimelineTimeHeader::paintSection1(QPainter *painter, const QRect &re
                                                    KisTimeBasedItemModel::FrameCachedRole);
 
         QVariant withinRangeValue = model()->headerData(logicalIndex, orientation(),
-                                                        KisTimeBasedItemModel::WithinClipRange);
+                                                        KisTimeBasedItemModel::WithinPlaybackRange);
 
         const bool isActive = activeValue.isValid() && activeValue.toBool();
         const bool isCached = cachedValue.isValid() && cachedValue.toBool();
@@ -468,8 +483,21 @@ int getColumnCount(const QModelIndexList &indexes, int *leftmostCol, int *rightm
     return columns.size();
 }
 
+void KisAnimTimelineTimeHeader::wheelEvent(QWheelEvent *event)
+{
+    auto view = qobject_cast<QTableView *>(parentWidget());
+    if (!view) { QHeaderView::wheelEvent(event); return; }
+    const QPoint pos = view->viewport()->mapFromGlobal(event->globalPos());
+    QWheelEvent forwarded(pos, event->globalPos(), event->pixelDelta(), event->angleDelta(),
+                          event->buttons(), event->modifiers(), event->phase(), event->inverted());
+    QApplication::sendEvent(view->viewport(), &forwarded);
+    event->accept();
+}
+
 void KisAnimTimelineTimeHeader::mousePressEvent(QMouseEvent *e)
 {
+    auto view = qobject_cast<KisAnimTimelineFramesView *>(parentWidget());
+    if (view && view->beginTimelineZoom(e, viewport())) return;
     int logical = logicalIndexAt(e->pos());
     if (logical != -1) {
         QModelIndexList selectedIndexes = selectionModel()->selectedIndexes();
@@ -548,6 +576,12 @@ void KisAnimTimelineTimeHeader::mousePressEvent(QMouseEvent *e)
 
 void KisAnimTimelineTimeHeader::mouseMoveEvent(QMouseEvent *e)
 {
+    auto view = qobject_cast<KisAnimTimelineFramesView *>(parentWidget());
+    if (view && view->isTimelineZoomActive()) {
+        view->updateTimelineZoom(e->globalPos());
+        e->accept();
+        return;
+    }
     int logical = logicalIndexAt(e->pos());
     if (logical != -1) {
 
@@ -595,6 +629,15 @@ int KisAnimTimelineTimeHeader::estimateFirstVisibleColumn()
 
 void KisAnimTimelineTimeHeader::mouseReleaseEvent(QMouseEvent *e)
 {
+    auto view = qobject_cast<KisAnimTimelineFramesView *>(parentWidget());
+    if (view && view->isTimelineZoomActive()) {
+        if (e->button() == Qt::LeftButton) {
+            view->updateTimelineZoom(e->globalPos());
+            view->endTimelineZoom();
+        }
+        e->accept();
+        return;
+    }
     if (!m_d->model)
         return;
 

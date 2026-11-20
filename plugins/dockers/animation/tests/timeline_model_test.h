@@ -25,6 +25,15 @@ private Q_SLOTS:
 
     void testConverter();
     void testModel();
+    void testRetimeFrames();
+    void testPreviewRangeSurvivesSelection();
+    void testPreviewRangeRoundTrip();
+    void testModalTransforms();
+    void testSummaryInteraction();
+    void testTrackClickActivatesLayer();
+    void testRangeFieldShortcut();
+    void testTimelineZoom();
+    void testPenZoomGesture();
     void testView();
     void testOnionSkins();
 

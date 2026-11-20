@@ -74,6 +74,9 @@ public:
         FramesPerSecondRole,
         FrameHasContent,
         WithinClipRange,
+        WithinPlaybackRange,
+        PreviewRangeStart,
+        PreviewRangeEnd,
         UserRole
     };
 

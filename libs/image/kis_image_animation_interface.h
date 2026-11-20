@@ -115,6 +115,11 @@ public:
     const KisTimeSpan &activePlaybackRange() const;
     void setActivePlaybackRange(const KisTimeSpan range);
 
+    // Document-owned preview bounds, independent of temporary player ranges.
+    KisTimeSpan previewPlaybackRange() const;
+    bool previewPlaybackRangeEnabled() const;
+    void setPreviewPlaybackRange(const KisTimeSpan &range, bool enabled);
+
     int framerate() const;
 
     QString exportSequenceFilePath();
