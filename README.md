@@ -45,6 +45,14 @@ overwrite undo, preview persistence, layer activation, range-field input, wheel
 zoom, and the pen/mouse zoom gesture. A fresh complete build of this cleaned
 repository and other platforms still need validation.
 
+## AI disclosure
+
+The timeline changes in this fork were developed with substantial assistance
+from OpenAI Codex, including AI-generated code, tests, and documentation. The
+project maintainer directed the features and tested the behavior interactively.
+This disclosure applies to this fork's changes; the original Krita source retains
+its existing authorship and copyright notices.
+
 ## Upstream
 
 The starting tree is a source snapshot of
