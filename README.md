@@ -1,6 +1,6 @@
-# Krita Timeline
+# Krita Blender Timeline
 
-Krita Timeline is a source fork of Krita 5.2.5 with Blender-inspired animation
+Krita Blender Timeline is a source fork of Krita 5.2.5 with Blender-inspired animation
 timeline editing. It uses Krita's existing layers, keyframe channels, undo system,
 and KRA document format.
 
@@ -55,12 +55,11 @@ its existing authorship and copyright notices.
 
 ## Upstream
 
-The starting tree is a source snapshot of
-[Krita v5.2.5](https://invent.kde.org/graphics/krita/-/tree/v5.2.5),
-upstream commit 454726af046a0fdd7ccae8ba2a7cfde18a344c7c.
-This repository records the snapshot import and subsequent timeline changes.
-Krita's earlier commit history is available in the
-[upstream repository](https://invent.kde.org/graphics/krita).
+This repository is a GitHub fork of [KDE/krita](https://github.com/KDE/krita).
+The timeline changes build on [Krita v5.2.5](https://invent.kde.org/graphics/krita/-/tree/v5.2.5),
+upstream commit 454726af046a0fdd7ccae8ba2a7cfde18a344c7c, preserving its
+upstream ancestry. Krita's primary development repository is hosted at
+[KDE Invent](https://invent.kde.org/graphics/krita).
 
 For the full Krita user manual, visit [docs.krita.org](https://docs.krita.org/).
 Contributions to this fork can be submitted through its GitHub pull requests.
