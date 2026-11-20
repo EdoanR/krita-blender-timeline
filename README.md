@@ -1,62 +1,64 @@
-![Picture](https://krita.org/images/krita-logo-light.svg)
+# Krita Timeline
 
-| CI Name     | Master | Stable | Release |
-| ------------------- | ---------------- | ------ | ------- |
-| Pipeline | [![pipeline status](https://invent.kde.org/graphics/krita/badges/master/pipeline.svg)](https://invent.kde.org/graphics/krita/-/commits/master) | [![pipeline status](https://invent.kde.org/graphics/krita/badges/krita/5.2/pipeline.svg)](https://invent.kde.org/graphics/krita/-/commits/krita/5.2) | [![Latest Release](https://invent.kde.org/graphics/krita/-/badges/release.svg)](https://invent.kde.org/graphics/krita/-/releases) |
+Krita Timeline is a source fork of Krita 5.2.5 with Blender-inspired animation
+timeline editing. It uses Krita's existing layers, keyframe channels, undo system,
+and KRA document format.
 
-Note: Nightly builds are not covered by this table atm
+## Timeline features
 
-Krita is a free and open source digital painting application. It is for artists who want to create professional work from start to end. Krita is used by comic book artists, illustrators, concept artists, matte and texture painters and in the digital VFX industry.
+- Summary keys represent keyframes across the visible timeline layers. Click to
+  select a column, Shift-click to select a range, and Ctrl-click to toggle columns.
+- Drag summary keys to move a selection. Summary moves can replace keys at the
+  destination, with Undo restoring the replaced keys.
+- Grab and scale keys with G and S, mouse movement, or numeric input. Enter
+  confirms and Esc cancels. Shift gives finer movement and Ctrl enables snapping.
+- Playback Start/End and an optional preview range appear in the bottom row.
+  Preview bounds and the enabled state are saved in KRA files.
+- Shift-click any range field to use the current frame. Crossing the opposite
+  boundary expands the range to keep it valid.
+- Clicking a frame cell activates that cell's layer, including empty cells.
+- Use the wheel to zoom around the pointer. The footer provides a zoom slider and
+  a Fit button for the playback range, enabled preview range, and timeline keys.
+- Hold Ctrl+Space and drag vertically over the grid, summary, or ruler to zoom
+  with a pen or mouse. Drag zoom follows the canvas inversion preference.
+- Hold Space and drag to pan. Playback uses Krita's transport controls or a
+  shortcut assigned in Keyboard Shortcuts.
 
-If you are reading this on GitHub, be aware that this is just a mirror. Our real code repository is provided by KDE: https://invent.kde.org/graphics/krita.git
+The timeline supports frames 0 through 9999. The frame grid has a minimum width
+of one pixel per frame, so very long ranges can exceed the viewport at minimum
+zoom. Summary scaling rejects ambiguous destinations where selected keys would
+collapse onto the same frame.
 
-![Picture](https://krita.org/images/hero-image-50.webp)
+## Build and tests
 
+Use the standard Krita 5.2.5 development dependencies and build process described
+in the [Krita build documentation](https://docs.krita.org/en/untranslatable_pages/building_krita.html).
 
-### User Manual
-https://docs.krita.org/en/user_manual.html
+The timeline regression tests are part of Krita's existing animation test suite.
+With testing enabled in a configured development build, run:
 
-### Development Notes and Build Instructions
+    cmake --build build --target timeline_model_test
+    ctest --test-dir build -R plugins-dockers-animation-timeline_model_test --output-on-failure
 
-Please follow [the online documentation](https://docs.krita.org/en/untranslatable_pages/building_krita.html).
+The latest local Windows validation passed 16 QtTest cases covering transforms,
+overwrite undo, preview persistence, layer activation, range-field input, wheel
+zoom, and the pen/mouse zoom gesture. A fresh complete build of this cleaned
+repository and other platforms still need validation.
 
-Other developer guides, notes and wiki:
+## Upstream
 
-https://docs.krita.org/en/untranslatable_pages.html
+The starting tree is a source snapshot of
+[Krita v5.2.5](https://invent.kde.org/graphics/krita/-/tree/v5.2.5),
+upstream commit 454726af046a0fdd7ccae8ba2a7cfde18a344c7c.
+This repository records the snapshot import and subsequent timeline changes.
+Krita's earlier commit history is available in the
+[upstream repository](https://invent.kde.org/graphics/krita).
 
-Apidox:
+For the full Krita user manual, visit [docs.krita.org](https://docs.krita.org/).
+Contributions to this fork can be submitted through its GitHub pull requests.
+Follow the upstream coding guidance in HACKING.
 
-https://api.kde.org/krita/html/index.html
+## License
 
-### Bugs and Wishes
-
-https://bugs.kde.org/buglist.cgi?bug_status=UNCONFIRMED&bug_status=CONFIRMED&bug_status=ASSIGNED&bug_status=REOPENED&list_id=1315444&product=krita&query_format=advanced
-
-### Discussion Forum
-
-* https://krita-artists.org/
-
-### IRC channel
-
-Most of the developers hang out here. If you are interested in helping with the project this is a great place to start.
-
-libera.chat, #krita
-
-### Project Website
-
-https://www.krita.org
-
-
-### Nightly builds
-
-#### Unstable
-
-* https://cdn.kde.org/ci-builds/graphics/krita/master/
-
-#### Stable
-
-* https://cdn.kde.org/ci-builds/graphics/krita/krita/5.2/
-
-### License
-
-Krita as a whole is licensed under the GNU Public License, Version 3. Individual files may have a different, but compatible license.
+Krita's original copyright notices and license files are retained.
+See [COPYING](COPYING) and the license notices in individual source files.

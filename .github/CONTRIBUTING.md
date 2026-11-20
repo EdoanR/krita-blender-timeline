@@ -1,14 +1,9 @@
-The Krita project is part of the KDE community. Krita is 
-developed on KDE's infrastructure, not GitHub's. Krita on
-GitHub is just a mirror. Do not create pull requests on
-GitHub.
+For timeline changes in this fork, open a GitHub pull request against main.
+Describe the resulting behavior and the validation performed. Add regression
+coverage to the existing animation tests when a change needs it.
 
-Please join our GitLab instance to start contributing. 
+Follow HACKING for Krita's coding guidelines.
 
-https://invent.kde.org/graphics/krita
-
-Please see the HACKING file for coding guidelines. The Krita
-API documentation is here:
-
-https://api.kde.org/extragear-api/graphics-apidocs/krita/html/index.html
-
+Development of upstream Krita takes place on KDE's infrastructure. Submit
+upstream contributions at https://invent.kde.org/graphics/krita and consult
+https://api.kde.org/krita/html/index.html for the API documentation.
